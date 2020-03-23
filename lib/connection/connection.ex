@@ -86,26 +86,26 @@ defmodule Hadean.RTSPConnection do
     start(state.socket)
   end
 
-  def connect() do
-    GenServer.call(__MODULE__, :connect)
+  def connect(pid) do
+    GenServer.call(pid, :connect)
   end
 
-  def options() do
-    GenServer.call(__MODULE__, :options)
+  def options(pid) do
+    GenServer.call(pid, :options)
   end
 
-  def describe() do
-    GenServer.call(__MODULE__, :describe)
+  def describe(pid) do
+    GenServer.call(pid, :describe)
   end
 
   # TODO abhi: figure out a way to use regex
 
-  def play() do
-    GenServer.call(__MODULE__, :play)
+  def play(pid) do
+    GenServer.call(pid, :play)
   end
 
-  def setup() do
-    GenServer.call(__MODULE__, :setup)
+  def setup(pid) do
+    GenServer.call(pid, :setup)
   end
 
   defp start(socket) do
