@@ -12,5 +12,6 @@ defmodule Hadean.Packet.RTPPacket do
             # contributing source identifiers
             csrcs: [],
             profile_specific_ext_hdr_id: 0,
-            ext_hdr_len: 0
+            ext_hdr_len: 0,
+            nal_data: nil
 end
