@@ -7,7 +7,10 @@ defmodule Hadean.RTSPConnection do
             server: nil,
             port: 0,
             socket: nil,
-            session: 0
+            session: 0,
+            # interleaved or UDP
+            mode: :interleaved,
+            cseq_num: 0
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -36,7 +39,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:options, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "OPTIONS #{state.url} RTSP/1.0\r\nCSeq: 2\r\nUser-Agent: hadean\r\n\r\n"
+      "OPTIONS #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\n\r\n"
     )
 
     case :gen_tcp.recv(state.socket, 0) do
@@ -44,25 +47,25 @@ defmodule Hadean.RTSPConnection do
       {:error, reason} -> raise reason
     end
 
-    {:reply, state, state}
+    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:setup, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "SETUP #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: 4\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
+      "SETUP #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
         state.session
       }\r\n\r\n"
     )
 
     _response = :gen_tcp.recv(state.socket, 0)
-    {:reply, state, state}
+    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: 3\r\nAccept: application/sdp\r\n\r\n"
+      "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nAccept: application/sdp\r\n\r\n"
     )
 
     response =
@@ -72,18 +75,35 @@ defmodule Hadean.RTSPConnection do
       end
 
     session = parse_sdp(response)
-    {:reply, state, state |> Map.put(:session, session)}
+
+    {:reply, state,
+     state
+     |> Map.put(:session, session)
+     |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:play, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: 5\r\nUser-Agent: hadean\r\nSession: #{
+      "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
         state.session
       }\r\nRange: npt=0.000-\r\n\r\n"
     )
 
+    # TODO abhi: state is as a Task under supervision
     start(state.socket)
+    {:reply, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+  end
+
+  def handle_call(:pause, _from, state) do
+    :gen_tcp.send(
+      state.socket,
+      "PAUSE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
+        state.session
+      }\r\n\r\n"
+    )
+
+    {:reply, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def connect(pid) do
@@ -102,6 +122,10 @@ defmodule Hadean.RTSPConnection do
 
   def play(pid) do
     GenServer.call(pid, :play)
+  end
+
+  def pause(pid) do
+    GenServer.call(pid, :pause)
   end
 
   def setup(pid) do
