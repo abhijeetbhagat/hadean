@@ -1,79 +1,123 @@
 use Bitwise
 
 defmodule Hadean.RTSPConnection do
-  def connect(url) do
+  use GenServer
+
+  defstruct url: nil,
+            server: nil,
+            port: 0,
+            socket: nil,
+            session: 0
+
+  def init([url, server, port]) do
+    state = %__MODULE__{
+      url: url,
+      server: server,
+      port: port
+    }
+
+    {:ok, state}
+  end
+
+  def start_link(state) do
+    GenServer.start_link(__MODULE__, state, name: __MODULE__)
+  end
+
+  def handle_call(:connect, _from, state) do
     socket =
-      case :gen_tcp.connect(url, 554, [:binary, active: false, packet: :raw]) do
+      case :gen_tcp.connect(state.server, state.port, [:binary, active: false, packet: :raw]) do
         {:ok, socket} -> socket
         {:error, reason} -> raise reason
       end
 
-    socket
+    {:reply, state, state |> Map.put(:socket, socket)}
   end
 
-  def send(socket, :options) do
+  def handle_call(:options, _from, state) do
     :gen_tcp.send(
-      socket,
-      "OPTIONS rtsp://wowzaec2demo.streamlock.net:554/vod/mp4:BigBuckBunny_115k.mov RTSP/1.0\r\nCSeq: 2\r\nUser-Agent: hadean\r\n\r\n"
+      state.socket,
+      "OPTIONS #{state.url} RTSP/1.0\r\nCSeq: 2\r\nUser-Agent: hadean\r\n\r\n"
     )
 
-    case :gen_tcp.recv(socket, 0) do
+    case :gen_tcp.recv(state.socket, 0) do
       {:ok, bytes} -> bytes
       {:error, reason} -> raise reason
     end
+
+    {:reply, state, state}
   end
 
-  def send(socket, :describe) do
+  def handle_call(:setup, _from, state) do
     :gen_tcp.send(
-      socket,
-      "DESCRIBE rtsp://wowzaec2demo.streamlock.net:554/vod/mp4:BigBuckBunny_115k.mov RTSP/1.0\r\nCSeq: 3\r\nAccept: application/sdp\r\n\r\n"
+      state.socket,
+      "SETUP #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: 4\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
+        state.session
+      }\r\n\r\n"
+    )
+
+    _response = :gen_tcp.recv(state.socket, 0)
+    {:reply, state, state}
+  end
+
+  def handle_call(:describe, _from, state) do
+    :gen_tcp.send(
+      state.socket,
+      "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: 3\r\nAccept: application/sdp\r\n\r\n"
     )
 
     response =
-      case :gen_tcp.recv(socket, 0) do
+      case :gen_tcp.recv(state.socket, 0) do
         {:ok, bytes} -> bytes
         {:error, reason} -> raise reason
       end
 
     session = parse_sdp(response)
-    session
+    {:reply, state, state |> Map.put(:session, session)}
+  end
+
+  def handle_call(:play, _from, state) do
+    :gen_tcp.send(
+      state.socket,
+      "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: 5\r\nUser-Agent: hadean\r\nSession: #{
+        state.session
+      }\r\nRange: npt=0.000-\r\n\r\n"
+    )
+
+    start(state.socket)
+  end
+
+  def connect() do
+    GenServer.call(__MODULE__, :connect)
+  end
+
+  def options() do
+    GenServer.call(__MODULE__, :options)
+  end
+
+  def describe() do
+    GenServer.call(__MODULE__, :describe)
   end
 
   # TODO abhi: figure out a way to use regex
 
-  def send(socket, :play, session) do
-    :gen_tcp.send(
-      socket,
-      "PLAY rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov/trackID=2 RTSP/1.0\r\nCSeq: 5\r\nUser-Agent: hadean\r\nSession: #{
-        session
-      }\r\nRange: npt=0.000-\r\n\r\n"
-    )
-
-    start(socket)
+  def play() do
+    GenServer.call(__MODULE__, :play)
   end
 
-  def send(socket, :setup, session) do
-    :gen_tcp.send(
-      socket,
-      "SETUP rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov/trackID=2 RTSP/1.0\r\nCSeq: 4\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
-        session
-      }\r\n\r\n"
-    )
-
-    response = :gen_tcp.recv(socket, 0)
-    response
+  def setup() do
+    GenServer.call(__MODULE__, :setup)
   end
 
-  def start(socket) do
+  defp start(socket) do
     {:ok,
      <<
-       packet_header::integer-8,
-       _::integer-8,
+       magic::integer-8,
+       _channel::integer-8,
        len::integer-16
      >>} = :gen_tcp.recv(socket, 4)
 
-    # if packet_header is '$', then it is start of the rtp data
-    if packet_header == 0x24 do
+    # if magic is '$', then it is start of the rtp data
+    if magic == 0x24 do
       {:ok, rtp_data} = :gen_tcp.recv(socket, len)
       IO.puts(inspect(parse_packet(rtp_data)))
     end
@@ -82,7 +126,7 @@ defmodule Hadean.RTSPConnection do
   end
 
   @spec parse_sdp(binary) :: any
-  def parse_sdp(response) do
+  defp parse_sdp(response) do
     String.split(response, "\r\n")
     |> Enum.find(fn line -> String.starts_with?(line, "Session") end)
     |> String.split(";")
@@ -91,14 +135,14 @@ defmodule Hadean.RTSPConnection do
     |> Enum.at(1)
   end
 
-  def parse_packet(rtp_data) do
+  defp parse_packet(rtp_data) do
     <<
       packet_header::integer-8,
       marker_payload_type::integer-8,
       seq_num::integer-16,
       timestamp::integer-32,
       ssrc::integer-32,
-      _rest::binary
+      rest::binary
     >> = rtp_data
 
     version =
@@ -122,7 +166,8 @@ defmodule Hadean.RTSPConnection do
       payload_type: payload_type,
       seq_num: seq_num,
       timestamp: timestamp,
-      ssrc: ssrc
+      ssrc: ssrc,
+      nal_data: rest
     }
   end
 end

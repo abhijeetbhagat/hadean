@@ -2,11 +2,16 @@ defmodule Hadean.RTSPStreamer do
   alias Hadean.RTSPConnection
 
   def main(_args) do
-    socket = RTSPConnection.connect({3, 84, 6, 190})
-    RTSPConnection.send(socket, :options)
-    session = RTSPConnection.send(socket, :describe)
-    _response = RTSPConnection.send(socket, :setup, session)
-    response = RTSPConnection.send(socket, :play, session)
-    IO.puts(inspect(response))
+    RTSPConnection.start_link([
+      "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov",
+      'wowzaec2demo.streamlock.net',
+      554
+    ])
+
+    RTSPConnection.connect()
+    RTSPConnection.options()
+    RTSPConnection.describe()
+    RTSPConnection.setup()
+    RTSPConnection.play()
   end
 end
