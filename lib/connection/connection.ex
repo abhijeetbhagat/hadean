@@ -91,11 +91,14 @@ defmodule Hadean.RTSPConnection do
     )
 
     # TODO abhi: state is as a Task under supervision
-    start(state.socket)
-    {:reply, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+    spawn(__MODULE__, :start, [state.socket])
+    # Task.start(fn -> start(state.socket) end)
+    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:pause, _from, state) do
+    IO.puts("sending pause ...")
+
     :gen_tcp.send(
       state.socket,
       "PAUSE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
@@ -103,7 +106,7 @@ defmodule Hadean.RTSPConnection do
       }\r\n\r\n"
     )
 
-    {:reply, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def connect(pid) do
@@ -132,7 +135,7 @@ defmodule Hadean.RTSPConnection do
     GenServer.call(pid, :setup)
   end
 
-  defp start(socket) do
+  def start(socket) do
     {:ok,
      <<
        magic::integer-8,
