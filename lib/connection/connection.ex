@@ -10,7 +10,8 @@ defmodule Hadean.RTSPConnection do
             session: 0,
             # interleaved or UDP
             mode: :interleaved,
-            cseq_num: 0
+            cseq_num: 0,
+            streamer_pid: 0
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -91,9 +92,10 @@ defmodule Hadean.RTSPConnection do
     )
 
     # TODO abhi: spawn as a Task under supervision
-    spawn(__MODULE__, :start, [state.socket])
+    streamer_pid = spawn(__MODULE__, :start, [state.socket])
     # Task.start(fn -> start(state.socket) end)
-    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+    {:reply, state,
+     state |> Map.put(:streamer_pid, streamer_pid) |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:pause, _from, state) do
@@ -116,6 +118,11 @@ defmodule Hadean.RTSPConnection do
         state.session
       }\r\n\r\n"
     )
+
+    # stop streaming process
+    Process.exit(state.streamer_pid, :shutdown)
+
+    :gen_tcp.close(state.socket)
   end
 
   def handle_call(:stop, _from, state) do
@@ -159,6 +166,11 @@ defmodule Hadean.RTSPConnection do
   defp stop_server(pid) do
     GenServer.call(pid, :teardown)
     GenServer.call(pid, :stop)
+  end
+
+  def terminate(_reason, _state) do
+    IO.puts("Stopped")
+    :ok
   end
 
   def start(socket) do
