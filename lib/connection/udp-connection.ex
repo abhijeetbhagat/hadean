@@ -1,6 +1,6 @@
 use Bitwise
 
-defmodule Hadean.RTSPOverConnection do
+defmodule Hadean.RTSPOverUDPConnection do
   use GenServer
 
   defstruct url: nil,
@@ -58,8 +58,8 @@ defmodule Hadean.RTSPOverConnection do
   end
 
   def handle_call(:setup, _from, state) do
-    rtp_port = 678_901
-    rtcp_port = 678_902
+    rtp_port = 35501
+    rtcp_port = 35502
 
     :gen_tcp.send(
       state.rtsp_socket,
@@ -68,7 +68,11 @@ defmodule Hadean.RTSPOverConnection do
       }-#{rtcp_port}\r\nSession: #{state.session}\r\n\r\n"
     )
 
-    response = :gen_tcp.recv(state.socket, 0)
+    response =
+      case(:gen_tcp.recv(state.rtsp_socket, 0)) do
+        {:ok, response} -> response
+        {:error, reason} -> raise reason
+      end
 
     [server_rtp_port, server_rtcp_port] =
       response
@@ -81,8 +85,8 @@ defmodule Hadean.RTSPOverConnection do
       |> String.split("-")
       |> Enum.map(fn x -> String.to_integer(x) end)
 
-    video_rtp_socket = :gen_udp.open(server_rtp_port)
-    video_rtcp_socket = :gen_udp.open(server_rtcp_port)
+    {:ok, video_rtp_socket} = :gen_udp.open(rtp_port, [:binary, active: false])
+    {:ok, video_rtcp_socket} = :gen_udp.open(rtcp_port, [:binary, active: false])
 
     state =
       state
@@ -104,7 +108,7 @@ defmodule Hadean.RTSPOverConnection do
 
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nAccept: application/sdp\r\n\r\n"
     )
 
@@ -169,7 +173,9 @@ defmodule Hadean.RTSPOverConnection do
     Process.exit(state.video_rtp_streamer_pid, :shutdown)
     Process.exit(state.video_rtcp_streamer_pid, :shutdown)
 
-    :gen_tcp.close(state.socket)
+    :gen_tcp.close(state.rtsp_socket)
+    :gen_udp.close(state.video_rtp_socket)
+    :gen_udp.close(state.video_rtcp_socket)
   end
 
   def handle_call(:stop, _from, state) do
