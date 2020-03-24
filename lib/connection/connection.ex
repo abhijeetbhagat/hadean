@@ -90,7 +90,7 @@ defmodule Hadean.RTSPConnection do
       }\r\nRange: npt=0.000-\r\n\r\n"
     )
 
-    # TODO abhi: state is as a Task under supervision
+    # TODO abhi: spawn as a Task under supervision
     spawn(__MODULE__, :start, [state.socket])
     # Task.start(fn -> start(state.socket) end)
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
@@ -107,6 +107,19 @@ defmodule Hadean.RTSPConnection do
     )
 
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+  end
+
+  def handle_call(:teardown, _from, state) do
+    :gen_tcp.send(
+      state.socket,
+      "TEARDOWN #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
+        state.session
+      }\r\n\r\n"
+    )
+  end
+
+  def handle_call(:stop, _from, state) do
+    {:stop, :normal, state}
   end
 
   def connect(pid) do
@@ -133,6 +146,19 @@ defmodule Hadean.RTSPConnection do
 
   def setup(pid) do
     GenServer.call(pid, :setup)
+  end
+
+  def teardown(pid) do
+    stop_server(pid)
+  end
+
+  def stop(pid) do
+    stop_server(pid)
+  end
+
+  defp stop_server(pid) do
+    GenServer.call(pid, :teardown)
+    GenServer.call(pid, :stop)
   end
 
   def start(socket) do

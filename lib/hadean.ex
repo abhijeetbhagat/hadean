@@ -21,9 +21,9 @@ defmodule Hadean.RTSPStreamer do
     IO.puts("Sleeing for a while ...")
     :timer.sleep(5000)
     IO.puts("Ok just woke up...")
-    IO.puts("Bout to hit that pause...")
+    IO.puts("Bout to kill that stream...")
 
-    RTSPConnection.pause(pid)
+    RTSPConnection.stop(pid)
 
     loop()
   end
