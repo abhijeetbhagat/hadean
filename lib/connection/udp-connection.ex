@@ -5,6 +5,7 @@ defmodule Hadean.RTSPOverUDPConnection do
 
   alias Hadean.Parsers.RTPPacketParser
   alias Hadean.Parsers.SDPParser
+  alias Hadean.Parsers.UrlParser
 
   defstruct url: nil,
             server: nil,
@@ -21,9 +22,21 @@ defmodule Hadean.RTSPOverUDPConnection do
             video_rtp_streamer_pid: 0,
             video_rtcp_streamer_pid: 0
 
-  def init([url, server, port]) do
+  def init([base_url, server, port]) do
     state = %__MODULE__{
-      url: url,
+      url: base_url,
+      server: server,
+      port: port
+    }
+
+    {:ok, state}
+  end
+
+  def init(base_url) do
+    {server, port} = UrlParser.parse(base_url)
+
+    state = %__MODULE__{
+      url: base_url,
       server: server,
       port: port
     }

@@ -8,11 +8,9 @@ defmodule Hadean.RTSPStreamer do
 
   def start_udp_conn() do
     {:ok, pid} =
-      RTSPOverUDPConnection.start_link([
-        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov",
-        'wowzaec2demo.streamlock.net',
-        554
-      ])
+      RTSPOverUDPConnection.start_link(
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"
+      )
 
     RTSPOverUDPConnection.connect(pid)
     RTSPOverUDPConnection.options(pid)
