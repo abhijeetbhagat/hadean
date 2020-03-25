@@ -6,6 +6,7 @@ defmodule Hadean.RTSPOverUDPConnection do
   alias Hadean.Parsers.RTPPacketParser
   alias Hadean.Parsers.SDPParser
   alias Hadean.Parsers.UrlParser
+  alias Hadean.Parsers.SetupResponseParser
 
   defstruct url: nil,
             server: nil,
@@ -90,16 +91,7 @@ defmodule Hadean.RTSPOverUDPConnection do
         {:error, reason} -> raise reason
       end
 
-    [server_rtp_port, server_rtcp_port] =
-      response
-      |> String.split("\r\n")
-      |> Enum.find(fn x -> String.starts_with?(x, "Transport") end)
-      |> String.split(";")
-      |> Enum.find(fn x -> String.starts_with?(x, "server_port") end)
-      |> String.split("=")
-      |> Enum.at(1)
-      |> String.split("-")
-      |> Enum.map(fn x -> String.to_integer(x) end)
+    {server_rtp_port, server_rtcp_port} = SetupResponseParser.parse_server_ports(response)
 
     {:ok, video_rtp_socket} = :gen_udp.open(rtp_port, [:binary, active: false])
     {:ok, video_rtcp_socket} = :gen_udp.open(rtcp_port, [:binary, active: false])
