@@ -3,7 +3,7 @@ defmodule Hadean.RTSPStreamer do
   alias Hadean.RTSPOverUDPConnection
 
   def main(_args) do
-    start_udp_conn()
+    start_tcp_conn()
   end
 
   def start_udp_conn() do
