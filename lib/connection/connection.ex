@@ -2,6 +2,9 @@ use Bitwise
 
 defmodule Hadean.RTSPConnection do
   use GenServer
+  alias Hadean.Parsers.RTPPacketParser
+  alias Hadean.Parsers.SDPParser
+  alias Hadean.Parsers.UrlParser
 
   defstruct url: nil,
             server: nil,
@@ -10,7 +13,8 @@ defmodule Hadean.RTSPConnection do
             session: 0,
             # interleaved or UDP
             mode: :interleaved,
-            cseq_num: 0
+            cseq_num: 0,
+            streamer_pid: 0
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -20,6 +24,18 @@ defmodule Hadean.RTSPConnection do
     }
 
     {:ok, state}
+  end
+
+  def init(base_url) do
+    {server, port} = UrlParser.parse(base_url)
+
+    state = %__MODULE__{
+      url: base_url,
+      server: server,
+      port: port
+    }
+
+    {:ok, state, 10_000_000}
   end
 
   def start_link(state) do
@@ -51,15 +67,41 @@ defmodule Hadean.RTSPConnection do
   end
 
   def handle_call(:setup, _from, state) do
+    state =
+      if state.context.audio_track != nil do
+        handle(:setup_audio, state)
+      end
+
+    state =
+      if state.context.video_track != nil do
+        handle(:setup_video, state)
+      end
+
+    {:reply, state, state}
+  end
+
+  def handle(:setup_audio, state) do
     :gen_tcp.send(
       state.socket,
-      "SETUP #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
-        state.session
+      "SETUP #{state.url}/#{state.context.audio_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
+        state.context.session
       }\r\n\r\n"
     )
 
     _response = :gen_tcp.recv(state.socket, 0)
-    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+    state |> Map.put(:cseq_num, state.cseq_num + 1)
+  end
+
+  def handle(:setup_video, state) do
+    :gen_tcp.send(
+      state.socket,
+      "SETUP #{state.url}/#{state.context.video_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
+        state.context.session
+      }\r\n\r\n"
+    )
+
+    _response = :gen_tcp.recv(state.socket, 0)
+    state |> Map.put(:cseq_num, state.cseq_num + 1)
   end
 
   def handle_call(:describe, _from, state) do
@@ -74,11 +116,11 @@ defmodule Hadean.RTSPConnection do
         {:error, reason} -> raise reason
       end
 
-    session = parse_sdp(response)
+    context = SDPParser.parse_sdp(response)
 
     {:reply, state,
      state
-     |> Map.put(:session, session)
+     |> Map.put(:context, context)
      |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
@@ -86,14 +128,15 @@ defmodule Hadean.RTSPConnection do
     :gen_tcp.send(
       state.socket,
       "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.session
+        state.context.session
       }\r\nRange: npt=0.000-\r\n\r\n"
     )
 
     # TODO abhi: spawn as a Task under supervision
-    spawn(__MODULE__, :start, [state.socket])
+    streamer_pid = spawn(__MODULE__, :start, [state.socket])
     # Task.start(fn -> start(state.socket) end)
-    {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
+    {:reply, state,
+     state |> Map.put(:streamer_pid, streamer_pid) |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:pause, _from, state) do
@@ -102,7 +145,7 @@ defmodule Hadean.RTSPConnection do
     :gen_tcp.send(
       state.socket,
       "PAUSE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.session
+        state.context.session
       }\r\n\r\n"
     )
 
@@ -113,9 +156,14 @@ defmodule Hadean.RTSPConnection do
     :gen_tcp.send(
       state.socket,
       "TEARDOWN #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.session
+        state.context.session
       }\r\n\r\n"
     )
+
+    # stop streaming process
+    Process.exit(state.streamer_pid, :shutdown)
+
+    :gen_tcp.close(state.socket)
   end
 
   def handle_call(:stop, _from, state) do
@@ -161,6 +209,11 @@ defmodule Hadean.RTSPConnection do
     GenServer.call(pid, :stop)
   end
 
+  def terminate(_reason, _state) do
+    IO.puts("Stopped")
+    :ok
+  end
+
   def start(socket) do
     {:ok,
      <<
@@ -172,55 +225,9 @@ defmodule Hadean.RTSPConnection do
     # if magic is '$', then it is start of the rtp data
     if magic == 0x24 do
       {:ok, rtp_data} = :gen_tcp.recv(socket, len)
-      IO.puts(inspect(parse_packet(rtp_data)))
+      IO.puts(inspect(RTPPacketParser.parse_packet(rtp_data)))
     end
 
     start(socket)
-  end
-
-  @spec parse_sdp(binary) :: any
-  defp parse_sdp(response) do
-    String.split(response, "\r\n")
-    |> Enum.find(fn line -> String.starts_with?(line, "Session") end)
-    |> String.split(";")
-    |> Enum.at(0)
-    |> String.split(" ")
-    |> Enum.at(1)
-  end
-
-  defp parse_packet(rtp_data) do
-    <<
-      packet_header::integer-8,
-      marker_payload_type::integer-8,
-      seq_num::integer-16,
-      timestamp::integer-32,
-      ssrc::integer-32,
-      rest::binary
-    >> = rtp_data
-
-    version =
-      case packet_header &&& 0x80 do
-        0 -> 1
-        _ -> 2
-      end
-
-    padding = (packet_header &&& 0x20) > 0
-    extension = (packet_header &&& 0x10) > 0
-    cc = packet_header &&& 0xF
-    marker = (marker_payload_type &&& 0x80) > 0
-    payload_type = marker_payload_type &&& 0x7F
-
-    %Hadean.Packet.RTPPacket{
-      version: version,
-      padding: padding,
-      extension: extension,
-      cc: cc,
-      marker: marker,
-      payload_type: payload_type,
-      seq_num: seq_num,
-      timestamp: timestamp,
-      ssrc: ssrc,
-      nal_data: rest
-    }
   end
 end
