@@ -89,8 +89,8 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:setup, _from, state) do
     state =
       if state.context.audio_track != nil do
-        rtp_port = 35503
-        rtcp_port = 35504
+        rtp_port = Application.fetch_env!(:hadean, audio_rtp_udp_port)
+        rtcp_port = Application.fetch_env!(:hadean, audio_rtcp_udp_port)
 
         handle(
           state.context.audio_track.id,
@@ -103,8 +103,8 @@ defmodule Hadean.RTSPOverUDPConnection do
 
     state =
       if state.context.video_track != nil do
-        rtp_port = 35501
-        rtcp_port = 35502
+        rtp_port = Application.fetch_env!(:hadean, video_rtp_udp_port)
+        rtcp_port = Application.fetch_env!(:hadean, video_rtcp_udp_port)
 
         handle(
           state.context.video_track.id,
