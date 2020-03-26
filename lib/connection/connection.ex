@@ -5,6 +5,12 @@ defmodule Hadean.RTSPConnection do
   alias Hadean.Parsers.RTPPacketParser
   alias Hadean.Parsers.SDPParser
   alias Hadean.Parsers.UrlParser
+  alias Hadean.Commands.Describe
+  alias Hadean.Commands.Setup
+  alias Hadean.Commands.Pause
+  alias Hadean.Commands.Options
+  alias Hadean.Commands.Teardown
+  alias Hadean.Commands.Play
 
   defstruct url: nil,
             server: nil,
@@ -55,7 +61,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:options, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "OPTIONS #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\n\r\n"
+      Options.create(state.url, state.cseq_num)
     )
 
     case :gen_tcp.recv(state.socket, 0) do
@@ -83,9 +89,12 @@ defmodule Hadean.RTSPConnection do
   def handle(:setup_audio, state) do
     :gen_tcp.send(
       state.socket,
-      "SETUP #{state.url}/#{state.context.audio_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Setup.create(
+        state.url,
+        state.cseq_num,
+        state.context.session,
+        state.context.audio_track.id
+      )
     )
 
     _response = :gen_tcp.recv(state.socket, 0)
@@ -95,9 +104,12 @@ defmodule Hadean.RTSPConnection do
   def handle(:setup_video, state) do
     :gen_tcp.send(
       state.socket,
-      "SETUP #{state.url}/#{state.context.video_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;interleaved=0-1\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Setup.create(
+        state.url,
+        state.cseq_num,
+        state.context.session,
+        state.context.video_track.id
+      )
     )
 
     _response = :gen_tcp.recv(state.socket, 0)
@@ -107,7 +119,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nAccept: application/sdp\r\n\r\n"
+      Describe.create(state.url, state.cseq_num)
     )
 
     response =
@@ -127,9 +139,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:play, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\nRange: npt=0.000-\r\n\r\n"
+      Play.create(state.url, state.cseq_num, state.session)
     )
 
     # TODO abhi: spawn as a Task under supervision
@@ -144,9 +154,7 @@ defmodule Hadean.RTSPConnection do
 
     :gen_tcp.send(
       state.socket,
-      "PAUSE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Pause.create(state.url, state.cseq_num, state.context.session)
     )
 
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
@@ -155,9 +163,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:teardown, _from, state) do
     :gen_tcp.send(
       state.socket,
-      "TEARDOWN #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Teardown.create(state.url, state.cseq_num, state.context.session)
     )
 
     # stop streaming process
