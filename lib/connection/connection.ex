@@ -75,45 +75,15 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:setup, _from, state) do
     state =
       if state.context.audio_track != nil do
-        handle(:setup_audio, state)
+        handle(state.context.audio_track.id, state)
       end
 
     state =
       if state.context.video_track != nil do
-        handle(:setup_video, state)
+        handle(state.context.video_track.id, state)
       end
 
     {:reply, state, state}
-  end
-
-  def handle(:setup_audio, state) do
-    :gen_tcp.send(
-      state.socket,
-      Setup.create(
-        state.url,
-        state.cseq_num,
-        state.context.session,
-        state.context.audio_track.id
-      )
-    )
-
-    _response = :gen_tcp.recv(state.socket, 0)
-    state |> Map.put(:cseq_num, state.cseq_num + 1)
-  end
-
-  def handle(:setup_video, state) do
-    :gen_tcp.send(
-      state.socket,
-      Setup.create(
-        state.url,
-        state.cseq_num,
-        state.context.session,
-        state.context.video_track.id
-      )
-    )
-
-    _response = :gen_tcp.recv(state.socket, 0)
-    state |> Map.put(:cseq_num, state.cseq_num + 1)
   end
 
   def handle_call(:describe, _from, state) do
@@ -174,6 +144,21 @@ defmodule Hadean.RTSPConnection do
 
   def handle_call(:stop, _from, state) do
     {:stop, :normal, state}
+  end
+
+  def handle(id, state) do
+    :gen_tcp.send(
+      state.socket,
+      Setup.create(
+        state.url,
+        state.cseq_num,
+        state.context.session,
+        id
+      )
+    )
+
+    _response = :gen_tcp.recv(state.socket, 0)
+    state |> Map.put(:cseq_num, state.cseq_num + 1)
   end
 
   def connect(pid) do
