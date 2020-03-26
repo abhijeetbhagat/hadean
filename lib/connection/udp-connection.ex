@@ -213,13 +213,13 @@ defmodule Hadean.RTSPOverUDPConnection do
     {:stop, :normal, state}
   end
 
-  def handle(
-        id,
-        {rtp_port, rtcp_port},
-        {rtp_port_atom, rtcp_port_atom},
-        {rtp_socket_atom, rtcp_socket_atom},
-        state
-      ) do
+  defp handle(
+         id,
+         {rtp_port, rtcp_port},
+         {rtp_port_atom, rtcp_port_atom},
+         {rtp_socket_atom, rtcp_socket_atom},
+         state
+       ) do
     :gen_tcp.send(
       state.rtsp_socket,
       Setup.create(
@@ -257,6 +257,7 @@ defmodule Hadean.RTSPOverUDPConnection do
     state
     |> Map.put(:cseq_num, state.cseq_num + 1)
     |> Map.put(rtp_port_atom, server_rtp_port)
+    |> Map.put(rtcp_port_atom, server_rtcp_port)
   end
 
   def connect(pid) do
