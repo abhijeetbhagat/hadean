@@ -7,6 +7,13 @@ defmodule Hadean.RTSPOverUDPConnection do
   alias Hadean.Parsers.SDPParser
   alias Hadean.Parsers.UrlParser
   alias Hadean.Parsers.SetupResponseParser
+  alias Hadean.Commands.Describe
+  alias Hadean.Commands.Play
+  alias Hadean.Commands.Setup
+  alias Hadean.Commands.Pause
+  alias Hadean.Commands.Options
+  alias Hadean.Commands.Teardown
+  alias Hadean.Connection.SocketPairGenerator
 
   defstruct url: nil,
             server: nil,
@@ -16,11 +23,17 @@ defmodule Hadean.RTSPOverUDPConnection do
             video_rtcp_socket: nil,
             video_rtp_port: 0,
             video_rtcp_port: 0,
+            audio_rtp_socket: nil,
+            audio_rtcp_socket: nil,
+            audio_rtp_port: 0,
+            audio_rtcp_port: 0,
             # interleaved or UDP
             mode: :interleaved,
             cseq_num: 0,
             video_rtp_streamer_pid: 0,
             video_rtcp_streamer_pid: 0,
+            audio_rtp_streamer_pid: 0,
+            audio_rtcp_streamer_pid: 0,
             context: nil
 
   def init([base_url, server, port]) do
@@ -46,6 +59,7 @@ defmodule Hadean.RTSPOverUDPConnection do
   end
 
   def start_link(state) do
+    SocketPairGenerator.start_link()
     GenServer.start_link(__MODULE__, state, name: __MODULE__)
   end
 
@@ -63,7 +77,7 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:options, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      "OPTIONS #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\n\r\n"
+      Options.create(state.url, state.cseq_num)
     )
 
     case :gen_tcp.recv(state.rtsp_socket, 0) do
@@ -77,12 +91,22 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:setup, _from, state) do
     state =
       if state.context.audio_track != nil do
-        handle(:setup_audio, state)
+        handle(
+          state.context.audio_track.id,
+          {:audio_rtp_port, :audio_rtcp_port},
+          {:audio_rtp_socket, :audio_rtcp_socket},
+          state
+        )
       end
 
     state =
       if state.context.video_track != nil do
-        handle(:setup_video, state)
+        handle(
+          state.context.video_track.id,
+          {:video_rtp_port, :video_rtcp_port},
+          {:video_rtp_socket, :video_rtcp_socket},
+          state
+        )
       end
 
     {:reply, state, state}
@@ -91,7 +115,7 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      "DESCRIBE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nAccept: application/sdp\r\n\r\n"
+      Describe.create(state.url, state.cseq_num)
     )
 
     response =
@@ -111,9 +135,7 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:play, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      "PLAY #{state.url}/trackID=2 RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\nRange: npt=0.000-\r\n\r\n"
+      Play.create(state.url, state.cseq_num, state.context.session)
     )
 
     # TODO abhi: spawn as a Task under supervision
@@ -158,13 +180,9 @@ defmodule Hadean.RTSPOverUDPConnection do
   end
 
   def handle_call(:pause, _from, state) do
-    IO.puts("sending pause ...")
-
     :gen_tcp.send(
       state.rtsp_socket,
-      "PAUSE #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Pause.create(state.url, state.cseq_num, state.context.session)
     )
 
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
@@ -173,33 +191,55 @@ defmodule Hadean.RTSPOverUDPConnection do
   def handle_call(:teardown, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      "TEARDOWN #{state.url} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nSession: #{
-        state.context.session
-      }\r\n\r\n"
+      Teardown.create(state.url, state.cseq_num, state.context.session)
     )
 
-    # stop streaming process
-    Process.exit(state.video_rtp_streamer_pid, :shutdown)
-    Process.exit(state.video_rtcp_streamer_pid, :shutdown)
-
     :gen_tcp.close(state.rtsp_socket)
-    :gen_udp.close(state.video_rtp_socket)
-    :gen_udp.close(state.video_rtcp_socket)
+    # stop streaming process
+    if state.video_rtp_streamer_pid != 0 do
+      Process.exit(state.video_rtp_streamer_pid, :shutdown)
+      Process.exit(state.video_rtcp_streamer_pid, :shutdown)
+    end
+
+    if state.audio_rtp_streamer_pid != 0 do
+      Process.exit(state.audio_rtp_streamer_pid, :shutdown)
+      Process.exit(state.audio_rtcp_streamer_pid, :shutdown)
+    end
+
+    if state.video_rtp_socket != nil do
+      :gen_udp.close(state.video_rtp_socket)
+      :gen_udp.close(state.video_rtcp_socket)
+    end
+
+    if state.audio_rtp_socket != nil do
+      :gen_udp.close(state.audio_rtp_socket)
+      :gen_udp.close(state.audio_rtcp_socket)
+    end
   end
 
   def handle_call(:stop, _from, state) do
     {:stop, :normal, state}
   end
 
-  def handle(:setup_video, state) do
-    rtp_port = 35501
-    rtcp_port = 35502
+  defp handle(
+         id,
+         {rtp_port_atom, rtcp_port_atom},
+         {rtp_socket_atom, rtcp_socket_atom},
+         state
+       ) do
+    {rtp_socket, rtcp_socket} = SocketPairGenerator.get_pair()
+    {{_, rtp_port}, {_, rtcp_port}} = {:inet.port(rtp_socket), :inet.port(rtcp_socket)}
 
     :gen_tcp.send(
       state.rtsp_socket,
-      "SETUP #{state.url}/#{state.context.video_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;client_port=#{
-        rtp_port
-      }-#{rtcp_port}\r\nSession: #{state.context.session}\r\n\r\n"
+      Setup.create(
+        state.url,
+        state.cseq_num,
+        state.context.session,
+        id,
+        rtp_port,
+        rtcp_port
+      )
     )
 
     response =
@@ -210,63 +250,18 @@ defmodule Hadean.RTSPOverUDPConnection do
 
     {server_rtp_port, server_rtcp_port} = SetupResponseParser.parse_server_ports(response)
 
-    {:ok, video_rtp_socket} = :gen_udp.open(rtp_port, [:binary, active: false])
-    {:ok, video_rtcp_socket} = :gen_udp.open(rtcp_port, [:binary, active: false])
+    :gen_udp.send(rtp_socket, state.server, server_rtp_port, "deadface")
+    :gen_udp.send(rtcp_socket, state.server, server_rtcp_port, "")
 
-    state =
-      state
-      |> Map.put(:video_rtp_socket, video_rtp_socket)
-      |> Map.put(:video_rtcp_socket, video_rtcp_socket)
-
-    :gen_udp.send(state.video_rtp_socket, state.server, server_rtp_port, "deadface")
-    :gen_udp.send(state.video_rtcp_socket, state.server, server_rtcp_port, "")
-
-    :gen_udp.send(state.video_rtp_socket, state.server, server_rtp_port, "deadface")
-    :gen_udp.send(state.video_rtcp_socket, state.server, server_rtcp_port, "")
+    :gen_udp.send(rtp_socket, state.server, server_rtp_port, "deadface")
+    :gen_udp.send(rtcp_socket, state.server, server_rtcp_port, "")
 
     state
     |> Map.put(:cseq_num, state.cseq_num + 1)
-    |> Map.put(:video_rtp_port, server_rtp_port)
-    |> Map.put(:video_rtcp_port, server_rtcp_port)
-  end
-
-  def handle(:setup_audio, state) do
-    rtp_port = 35503
-    rtcp_port = 35504
-
-    :gen_tcp.send(
-      state.rtsp_socket,
-      "SETUP #{state.url}/#{state.context.audio_track.id} RTSP/1.0\r\nCSeq: #{state.cseq_num}\r\nUser-Agent: hadean\r\nTransport: RTP/AVP;unicast;client_port=#{
-        rtp_port
-      }-#{rtcp_port}\r\nSession: #{state.context.session}\r\n\r\n"
-    )
-
-    response =
-      case(:gen_tcp.recv(state.rtsp_socket, 0)) do
-        {:ok, response} -> response
-        {:error, reason} -> raise reason
-      end
-
-    {server_rtp_port, server_rtcp_port} = SetupResponseParser.parse_server_ports(response)
-
-    {:ok, audio_rtp_socket} = :gen_udp.open(rtp_port, [:binary, active: false])
-    {:ok, audio_rtcp_socket} = :gen_udp.open(rtcp_port, [:binary, active: false])
-
-    state =
-      state
-      |> Map.put(:audio_rtp_socket, audio_rtp_socket)
-      |> Map.put(:audio_rtcp_socket, audio_rtcp_socket)
-
-    :gen_udp.send(state.audio_rtp_socket, state.server, server_rtp_port, "deadface")
-    :gen_udp.send(state.audio_rtcp_socket, state.server, server_rtcp_port, "")
-
-    :gen_udp.send(state.audio_rtp_socket, state.server, server_rtp_port, "deadface")
-    :gen_udp.send(state.audio_rtcp_socket, state.server, server_rtcp_port, "")
-
-    state
-    |> Map.put(:cseq_num, state.cseq_num + 1)
-    |> Map.put(:audio_rtp_port, server_rtp_port)
-    |> Map.put(:audio_rtcp_port, server_rtcp_port)
+    |> Map.put(rtp_port_atom, server_rtp_port)
+    |> Map.put(rtcp_port_atom, server_rtcp_port)
+    |> Map.put(rtp_socket_atom, rtp_socket)
+    |> Map.put(rtcp_socket_atom, rtcp_socket)
   end
 
   def connect(pid) do
