@@ -11,11 +11,11 @@ defmodule HadeanTest do
       uri: "some/uri"
     })
 
-    state = Digest.get_response(pid)
-    assert state.response != nil
-    state = Digest.get_response(pid)
-    assert state.response != nil
-    s = Digest.get_str_rep(pid)
-    IO.puts(inspect(s))
+    state = Digest.get_str_rep(pid, "DESCRIBE")
+    IO.puts(state)
+    state = Digest.get_str_rep(pid, "SETUP")
+    IO.puts(state)
+    state = Digest.get_str_rep(pid, "SETUP")
+    IO.puts(state)
   end
 end

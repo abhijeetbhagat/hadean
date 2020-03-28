@@ -6,7 +6,8 @@ defmodule Hadean.Authentication.Digest do
             realm: nil,
             nonce: nil,
             uri: nil,
-            response: nil
+            response: nil,
+            ha1: nil
 
   def start_link({username, password}) do
     Agent.start_link(fn ->
@@ -24,40 +25,42 @@ defmodule Hadean.Authentication.Digest do
   def update(agent, digest) do
     Agent.update(agent, fn state ->
       state
+      |> Map.put(
+        :ha1,
+        :crypto.hash(
+          :md5,
+          state.username <> ":" <> digest.realm <> ":" <> state.password
+        )
+      )
       |> Map.put(:realm, digest.realm)
       |> Map.put(:nonce, digest.nonce)
       |> Map.put(:uri, digest.uri)
     end)
   end
 
-  def get_response(agent) do
-    state = Agent.get(agent, fn state -> state end)
+  defp get_response(agent, method) do
+    Agent.update(
+      agent,
+      fn state -> state |> Map.put(:response, calc_response(state, method)) end
+    )
 
-    case state.response do
-      nil ->
-        Agent.update(
-          agent,
-          fn state -> state |> Map.put(:response, calc_response(state)) end
-        )
-
-        Agent.get(agent, fn state -> state end)
-
-      _ ->
-        state
-    end
+    Agent.get(agent, fn state -> state end)
   end
 
-  defp calc_response(state) do
-    ha1 = :crypto.hash(:md5, state.username <> ":" <> state.realm <> ":" <> state.password)
-    ha2 = :crypto.hash(:md5, "SETUP" <> ":" <> state.uri)
-    :crypto.hash(:md5, ha1 <> ":" <> ha2) |> Base.encode16()
+  defp calc_response(state, method) do
+    ha2 = :crypto.hash(:md5, method <> ":" <> state.uri)
+    :crypto.hash(:md5, state.ha1 <> ":" <> ha2) |> Base.encode16()
   end
 
-  def get_str_rep(agent) do
-    digest = Hadean.Authentication.Digest.get(agent)
+  def get_str_rep(agent, method) do
+    digest = get_response(agent, method)
 
     "Authentication: Digest username=\"#{digest.username}\", realm=\"#{digest.realm}\", nonce=\"#{
       digest.nonce
-    }\", uri=\"#{digest.uri}\", response=\"#{digest.response}\"\r\n\r\n"
+    }\", uri=\"#{digest.uri}\", response=\"#{digest.response}\""
+  end
+
+  def stop(agent) do
+    Agent.stop(agent)
   end
 end
