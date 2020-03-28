@@ -5,12 +5,14 @@ defmodule Hadean.RTSPConnection do
   alias Hadean.Parsers.RTPPacketParser
   alias Hadean.Parsers.SDPParser
   alias Hadean.Parsers.UrlParser
+  alias Hadean.Parsers.DescribeResponseParser
   alias Hadean.Commands.Describe
   alias Hadean.Commands.Setup
   alias Hadean.Commands.Pause
   alias Hadean.Commands.Options
   alias Hadean.Commands.Teardown
   alias Hadean.Commands.Play
+  alias Hadean.Authentication.Digest
 
   defstruct url: nil,
             server: nil,
@@ -20,7 +22,9 @@ defmodule Hadean.RTSPConnection do
             # interleaved or UDP
             mode: :interleaved,
             cseq_num: 0,
-            streamer_pid: 0
+            streamer_pid: 0,
+            auth_pid: 0,
+            auth_needed: false
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -30,6 +34,22 @@ defmodule Hadean.RTSPConnection do
     }
 
     {:ok, state}
+  end
+
+  def init({url, username, password}) do
+    {server, port} = UrlParser.parse(url)
+
+    pid = Digest.start_link({username, password})
+
+    state = %__MODULE__{
+      url: url,
+      server: server,
+      port: port
+    }
+
+    state |> Map.put(:auth_agent, pid)
+
+    {:ok, state, 10_000_000}
   end
 
   def init(base_url) do
@@ -44,8 +64,12 @@ defmodule Hadean.RTSPConnection do
     {:ok, state, 10_000_000}
   end
 
-  def start_link(state) do
-    GenServer.start_link(__MODULE__, state, name: __MODULE__)
+  def start_link({url, username, password}) do
+    GenServer.start_link(__MODULE__, {url, username, password}, name: __MODULE__)
+  end
+
+  def start_link(url) do
+    GenServer.start_link(__MODULE__, url)
   end
 
   def handle_call(:connect, _from, state) do
@@ -98,7 +122,29 @@ defmodule Hadean.RTSPConnection do
         {:error, reason} -> raise reason
       end
 
-    context = SDPParser.parse_sdp(response)
+    context =
+      case DescribeResponseParser.parse(response, state.url) do
+        :no_auth ->
+          SDPParser.parse_sdp(response)
+
+        {:auth_required, digest} ->
+          state |> Map.put(:auth_needed, true)
+          pid = state.auth_agent
+          Digest.update(pid, digest)
+
+          :gen_tcp.send(
+            state.socket,
+            Describe.create(state.url, state.cseq_num, Digest.get_str_rep(pid, "DESCRIBE"))
+          )
+
+          response =
+            case :gen_tcp.recv(state.socket, 0) do
+              {:ok, bytes} -> bytes
+              {:error, reason} -> raise reason
+            end
+
+          SDPParser.parse_sdp(response)
+      end
 
     {:reply, state,
      state
@@ -109,7 +155,14 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:play, _from, state) do
     :gen_tcp.send(
       state.socket,
-      Play.create(state.url, state.cseq_num, state.session)
+      case state.auth_needed do
+        false ->
+          Play.create(state.url, state.cseq_num, state.session)
+
+        _ ->
+          pid = state.auth_pid
+          Play.create(state.url, state.cseq_num, state.session, Digest.get_str_rep(pid, "PLAY"))
+      end
     )
 
     # TODO abhi: spawn as a Task under supervision
@@ -120,22 +173,47 @@ defmodule Hadean.RTSPConnection do
   end
 
   def handle_call(:pause, _from, state) do
-    IO.puts("sending pause ...")
-
     :gen_tcp.send(
       state.socket,
-      Pause.create(state.url, state.cseq_num, state.context.session)
+      case state.auth_needed do
+        false ->
+          Pause.create(state.url, state.cseq_num, state.context.session)
+
+        _ ->
+          pid = state.auth_pid
+
+          Pause.create(
+            state.url,
+            state.cseq_num,
+            state.context.session,
+            Digest.get_str_rep(pid, "PAUSE")
+          )
+      end
     )
 
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:teardown, _from, state) do
+    pid = state.auth_pid
+
     :gen_tcp.send(
       state.socket,
-      Teardown.create(state.url, state.cseq_num, state.context.session)
+      case state.auth_needed do
+        false ->
+          Teardown.create(state.url, state.cseq_num, state.context.session)
+
+        _ ->
+          Teardown.create(
+            state.url,
+            state.cseq_num,
+            state.context.session,
+            Digest.get_str_rep(pid, "TEARDOWN")
+          )
+      end
     )
 
+    Digest.stop(pid)
     # stop streaming process
     Process.exit(state.streamer_pid, :shutdown)
 
@@ -149,12 +227,26 @@ defmodule Hadean.RTSPConnection do
   def handle(id, state) do
     :gen_tcp.send(
       state.socket,
-      Setup.create(
-        state.url,
-        state.cseq_num,
-        state.context.session,
-        id
-      )
+      case state.auth_needed do
+        false ->
+          Setup.create(
+            state.url,
+            state.cseq_num,
+            state.context.session,
+            id
+          )
+
+        _ ->
+          pid = state.auth_agent
+
+          Setup.create(
+            state.url,
+            state.cseq_num,
+            state.context.session,
+            id,
+            Digest.get_str_rep(pid, "SETUP")
+          )
+      end
     )
 
     _response = :gen_tcp.recv(state.socket, 0)
