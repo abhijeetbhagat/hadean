@@ -49,12 +49,14 @@ defmodule Hadean.RTSPStreamer do
 
     # Task.start_link(fn -> RTSPConnection.play(pid) end)
 
+    _ = """
     IO.puts("Sleeing for a while ...")
     :timer.sleep(5000)
     IO.puts("Ok just woke up...")
     IO.puts("Bout to kill that stream...")
 
     RTSPConnection.stop(pid)
+    """
 
     loop()
   end
