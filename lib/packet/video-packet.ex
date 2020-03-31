@@ -48,6 +48,16 @@ defmodule Hadean.Packet.VideoPacket do
     {_first_mb_in_slice, slice_data} = ExGolombDecoder.read_ue(slice_data)
     {frame_type, _slice_data} = ExGolombDecoder.read_ue(slice_data)
 
+    frame_type =
+      case frame_type do
+        n when n == 0 or n == 5 -> :i
+        n when n == 1 or n == 6 -> :b
+        n when n == 2 or n == 7 -> :p
+        n when n == 3 or n == 8 -> :sp
+        n when n == 4 or n == 9 -> :si
+        _ -> :unknown
+      end
+
     %Hadean.Packet.VideoPacket{
       header: header,
       nalu_type: nalu_type,
