@@ -2,7 +2,8 @@ use Bitwise
 
 defmodule Hadean.RTSPConnection do
   use GenServer
-  alias Hadean.Parsers.RTPPacketParser
+  alias Hadean.Packet.RTPPacketHeader
+  alias Hadean.Packet.VideoPacket
   alias Hadean.Parsers.SDPParser
   alias Hadean.Parsers.UrlParser
   alias Hadean.Parsers.DescribeResponseParser
@@ -96,16 +97,21 @@ defmodule Hadean.RTSPConnection do
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
-  def handle_call(:setup, _from, state) do
-    state =
-      if state.context.audio_track != nil do
-        handle(state.context.audio_track.id, state)
-      end
+  def handle_call(:setup_all, _from, state) do
+    state = handle_audio(state)
+    state = handle_audio(state)
 
-    state =
-      if state.context.video_track != nil do
-        handle(state.context.video_track.id, state)
-      end
+    {:reply, state, state}
+  end
+
+  def handle_call(:setup_audio, _from, state) do
+    state = handle_audio(state)
+
+    {:reply, state, state}
+  end
+
+  def handle_call(:setup_video, _from, state) do
+    state = handle_video(state)
 
     {:reply, state, state}
   end
@@ -153,23 +159,27 @@ defmodule Hadean.RTSPConnection do
   end
 
   def handle_call(:play, _from, state) do
-    :gen_tcp.send(
-      state.socket,
+    auth =
       case state.auth_needed do
         false ->
-          Play.create(state.url, state.cseq_num, state.session)
+          ""
 
         _ ->
-          pid = state.auth_pid
-          Play.create(state.url, state.cseq_num, state.session, Digest.get_str_rep(pid, "PLAY"))
+          Digest.get_str_rep(state.auth_pid, "PLAY")
       end
+
+    :gen_tcp.send(
+      state.socket,
+      Play.create(state.url, state.cseq_num, state.session, auth)
     )
 
     # TODO abhi: spawn as a Task under supervision
     streamer_pid = spawn(__MODULE__, :start, [state.socket])
     # Task.start(fn -> start(state.socket) end)
     {:reply, state,
-     state |> Map.put(:streamer_pid, streamer_pid) |> Map.put(:cseq_num, state.cseq_num + 1)}
+     state
+     |> Map.put(:streamer_pid, streamer_pid)
+     |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:pause, _from, state) do
@@ -224,7 +234,19 @@ defmodule Hadean.RTSPConnection do
     {:stop, :normal, state}
   end
 
-  def handle(id, state) do
+  defp handle_audio(state) do
+    if state.context.audio_track != nil do
+      handle(state.context.audio_track.id, state)
+    end
+  end
+
+  defp handle_video(state) do
+    if state.context.video_track != nil do
+      handle(state.context.video_track.id, state)
+    end
+  end
+
+  defp handle(id, state) do
     :gen_tcp.send(
       state.socket,
       case state.auth_needed do
@@ -267,26 +289,44 @@ defmodule Hadean.RTSPConnection do
 
   # TODO abhi: figure out a way to use regex
 
+  @spec play(PID) :: term
   def play(pid) do
     GenServer.call(pid, :play)
   end
 
+  @spec pause(PID) :: term
   def pause(pid) do
     GenServer.call(pid, :pause)
   end
 
-  def setup(pid) do
-    GenServer.call(pid, :setup)
+  @spec setup(PID, :all | :audio | :video) :: term
+  def setup(pid, mode) do
+    setup_type =
+      case mode do
+        :all ->
+          :setup_all
+
+        :audio ->
+          :setup_audio
+
+        :video ->
+          :setup_video
+      end
+
+    GenServer.call(pid, setup_type)
   end
 
+  @spec teardown(PID) :: term
   def teardown(pid) do
     stop_server(pid)
   end
 
+  @spec stop(PID) :: term
   def stop(pid) do
     stop_server(pid)
   end
 
+  @spec stop_server(PID) :: term
   defp stop_server(pid) do
     GenServer.call(pid, :teardown)
     GenServer.call(pid, :stop)
@@ -308,7 +348,16 @@ defmodule Hadean.RTSPConnection do
     # if magic is '$', then it is start of the rtp data
     if magic == 0x24 do
       {:ok, rtp_data} = :gen_tcp.recv(socket, len)
-      IO.puts(inspect(RTPPacketParser.parse_packet(rtp_data)))
+      {header, rest} = RTPPacketHeader.parse_packet(rtp_data)
+
+      case header.payload_type do
+        97 ->
+          packet = VideoPacket.parse(header, rest)
+          IO.puts("frame_type: #{inspect(packet.frame_type)}")
+
+        _ ->
+          nil
+      end
     end
 
     start(socket)
