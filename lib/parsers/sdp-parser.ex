@@ -47,7 +47,46 @@ defmodule Hadean.Parsers.SDPParser do
     track =
       common_parsing_loop(audio_lines, %Hadean.Connection.Track{type: :audio, rtp_type: type_num})
 
+    audio_codec_info =
+      track.fmtp
+      |> String.split(" ")
+      |> Enum.at(1)
+      |> String.split(";")
+      |> Enum.map(fn prop_val -> String.split(prop_val, "=") |> List.to_tuple() end)
+      |> to_audio_codec_info(%Hadean.Codecs.AudioCodecInfo{})
+
+    track |> Map.put(:codec_info, audio_codec_info)
+
     {track, lines |> Enum.drop(length(audio_lines))}
+  end
+
+  defp to_audio_codec_info([{prop, val} | tail], codec_info) do
+    codec_info =
+      case prop do
+        "mode" ->
+          case val do
+            "AAC-hbr" -> codec_info |> Map.put(:mode, :aac)
+            _ -> codec_info |> Map.put(:mode, :unknown)
+          end
+
+        "sizeLength" ->
+          codec_info |> Map.put(:size_length, val |> String.to_integer())
+
+        "indexLength" ->
+          codec_info |> Map.put(:index_length, val |> String.to_integer())
+
+        "indexdeltaLength" ->
+          codec_info |> Map.put(:index_delta_length, val |> String.to_integer())
+
+        _ ->
+          codec_info
+      end
+
+    to_audio_codec_info(tail, codec_info)
+  end
+
+  defp to_audio_codec_info([], codec_info) do
+    codec_info
   end
 
   defp parse_video_description(line, lines) do

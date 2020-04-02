@@ -3,6 +3,7 @@ defmodule HadeanTest do
   alias Hadean.Connection.Track
   alias Hadean.Connection.ConnectionContext
   alias Hadean.Parsers.SDPParser
+  alias Hadean.Authentication.Digest
 
   doctest Hadean.Parsers.SDPParser
 
