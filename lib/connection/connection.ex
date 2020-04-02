@@ -15,6 +15,8 @@ defmodule Hadean.RTSPConnection do
   alias Hadean.Commands.Play
   alias Hadean.Authentication.Digest
 
+  @typep s :: port()
+
   defstruct url: nil,
             server: nil,
             port: 0,
@@ -25,7 +27,8 @@ defmodule Hadean.RTSPConnection do
             cseq_num: 0,
             streamer_pid: 0,
             auth_pid: 0,
-            auth_needed: false
+            auth_needed: false,
+            context: nil
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -134,15 +137,19 @@ defmodule Hadean.RTSPConnection do
           SDPParser.parse_sdp(response)
 
         {:auth_required, digest} ->
+          # auth required, so update digest info which already has
+          # username and password
           state |> Map.put(:auth_needed, true)
           pid = state.auth_agent
           Digest.update(pid, digest)
 
+          # resend DESCRIBE with auth info
           :gen_tcp.send(
             state.socket,
             Describe.create(state.url, state.cseq_num, Digest.get_str_rep(pid, "DESCRIBE"))
           )
 
+          # now parse the SDP info from the response
           response =
             case :gen_tcp.recv(state.socket, 0) do
               {:ok, bytes} -> bytes
@@ -174,7 +181,7 @@ defmodule Hadean.RTSPConnection do
     )
 
     # TODO abhi: spawn as a Task under supervision
-    streamer_pid = spawn(__MODULE__, :start, [state.socket])
+    streamer_pid = spawn(__MODULE__, :start, [state.socket, state.context])
     # Task.start(fn -> start(state.socket) end)
     {:reply, state,
      state
@@ -337,7 +344,8 @@ defmodule Hadean.RTSPConnection do
     :ok
   end
 
-  def start(socket) do
+  @spec start(s, Hadean.Connection.ConnectionContext.t()) :: no_return()
+  def start(socket, context) do
     {:ok,
      <<
        magic::integer-8,
@@ -348,18 +356,18 @@ defmodule Hadean.RTSPConnection do
     # if magic is '$', then it is start of the rtp data
     if magic == 0x24 do
       {:ok, rtp_data} = :gen_tcp.recv(socket, len)
-      {header, rest} = RTPPacketHeader.parse_packet(rtp_data)
+      {rtp_header, rtp_payload} = RTPPacketHeader.parse_packet(rtp_data)
 
-      case header.payload_type do
+      case rtp_header.payload_type do
         97 ->
-          packet = VideoPacket.parse(header, rest)
+          packet = VideoPacket.parse(rtp_header, rtp_payload)
           IO.puts("frame_type: #{inspect(packet.frame_type)}")
 
         _ ->
-          nil
+          packet = AudioPacket.parse(rtp_header, rtp_payload, context.audio_track.codec_info)
       end
     end
 
-    start(socket)
+    start(socket, context)
   end
 end

@@ -43,7 +43,7 @@ defmodule Hadean.RTSPStreamer do
     RTSPConnection.connect(pid)
     RTSPConnection.options(pid)
     RTSPConnection.describe(pid)
-    RTSPConnection.setup(pid)
+    RTSPConnection.setup(pid, :audio)
     RTSPConnection.play(pid)
     IO.puts("Spawned play ...")
 
