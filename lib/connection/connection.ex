@@ -44,7 +44,7 @@ defmodule Hadean.RTSPConnection do
     {:ok, state}
   end
 
-  def init({url, username, password}) do
+  def init({url, username, password, transport}) do
     {server, port} = UrlParser.parse(url)
 
     pid = Digest.start_link({username, password})
@@ -52,7 +52,8 @@ defmodule Hadean.RTSPConnection do
     state = %__MODULE__{
       url: url,
       server: server,
-      port: port
+      port: port,
+      transport: transport
     }
 
     state |> Map.put(:auth_agent, pid)
@@ -60,27 +61,27 @@ defmodule Hadean.RTSPConnection do
     {:ok, state, 10_000_000}
   end
 
-  def init(base_url, mode) do
+  def init(base_url, transport) do
     {server, port} = UrlParser.parse(base_url)
 
     state = %__MODULE__{
       url: base_url,
       server: server,
       port: port,
-      transport: mode
+      transport: transport
     }
 
     {:ok, state, 10_000_000}
   end
 
-  def start_link({url, username, password}) do
-    GenServer.start_link(__MODULE__, {url, username, password}, name: __MODULE__)
+  def start_link({url, username, password, transport}) do
+    GenServer.start_link(__MODULE__, {url, username, password, transport}, name: __MODULE__)
   end
 
   @spec start_link(binary(), :tcp | :udp) ::
-          :ignore | {:ok, PID} | {:error, {:already_started, pid}}
-  def start_link(url, mode) do
-    GenServer.start_link(__MODULE__, url, mode)
+          :ignore | {:ok, PID} | {:error, any}
+  def start_link(url, transport) do
+    GenServer.start_link(__MODULE__, url, transport)
   end
 
   def handle_call(:connect, _from, state) do
@@ -436,8 +437,9 @@ defmodule Hadean.RTSPConnection do
     :ok
   end
 
-  @spec start(s, Hadean.Connection.ConnectionContext.t()) :: no_return()
-  def start(socket, context) do
+  @spec start(s, Hadean.Connection.ConnectionContext.t(), integer() | nil, integer() | nil) ::
+          no_return()
+  def start(socket, context, audio_rtp_type, video_rtp_type) do
     {:ok,
      <<
        magic::integer-8,
@@ -451,20 +453,37 @@ defmodule Hadean.RTSPConnection do
       {rtp_header, rtp_payload} = RTPPacketHeader.parse_packet(rtp_data)
 
       case rtp_header.payload_type do
-        97 ->
+        x when x == video_rtp_type ->
           packet = VideoPacket.parse(rtp_header, rtp_payload)
           IO.puts("frame_type: #{inspect(packet.frame_type)}")
 
-        _ ->
+        y when y == audio_rtp_type ->
           _packet = AudioPacket.parse(rtp_header, rtp_payload, context.audio_track.codec_info)
+
+        _ ->
+          nil
       end
     end
 
-    start(socket, context)
+    start(socket, context, audio_rtp_type, video_rtp_type)
   end
 
   defp handle_play(:tcp, state) do
-    streamer_pid = spawn(__MODULE__, :start, [state.socket, state.context])
+    audio_rtp_type =
+      case state.context.audio_track do
+        nil -> nil
+        t -> t.rtp_type
+      end
+
+    video_rtp_type =
+      case state.context.video_track do
+        nil -> nil
+        t -> t.rtp_type
+      end
+
+    streamer_pid =
+      spawn(__MODULE__, :start, [state.socket, state.context, audio_rtp_type, video_rtp_type])
+
     # Task.start(fn -> start(state.socket) end)
     {:reply, state, state |> Map.put(:streamer_pid, streamer_pid)}
   end
