@@ -89,7 +89,7 @@ defmodule Hadean.RTSPConnection do
         {:error, reason} -> raise reason
       end
 
-    {:reply, state, state |> Map.put(:socket, socket)}
+    {:reply, state, state |> Map.put(:rtsp_socket, socket)}
   end
 
   def handle_call(:options, _from, state) do
