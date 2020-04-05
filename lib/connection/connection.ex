@@ -23,7 +23,7 @@ defmodule Hadean.RTSPConnection do
   defstruct url: nil,
             server: nil,
             port: 0,
-            socket: nil,
+            rtsp_socket: nil,
             session: 0,
             # interleaved or UDP
             mode: :interleaved,
@@ -61,7 +61,7 @@ defmodule Hadean.RTSPConnection do
     {:ok, state, 10_000_000}
   end
 
-  def init(base_url, transport) do
+  def init({base_url, transport}) do
     {server, port} = UrlParser.parse(base_url)
 
     state = %__MODULE__{
@@ -74,14 +74,12 @@ defmodule Hadean.RTSPConnection do
     {:ok, state, 10_000_000}
   end
 
-  def start_link({url, username, password, transport}) do
-    GenServer.start_link(__MODULE__, {url, username, password, transport}, name: __MODULE__)
+  def start_link({url, transport}) do
+    GenServer.start_link(__MODULE__, {url, transport}, name: __MODULE__)
   end
 
-  @spec start_link(binary(), :tcp | :udp) ::
-          :ignore | {:ok, PID} | {:error, any}
-  def start_link(url, transport) do
-    GenServer.start_link(__MODULE__, url, transport)
+  def start_link({url, username, password, transport}) do
+    GenServer.start_link(__MODULE__, {url, username, password, transport}, name: __MODULE__)
   end
 
   def handle_call(:connect, _from, state) do
@@ -96,11 +94,11 @@ defmodule Hadean.RTSPConnection do
 
   def handle_call(:options, _from, state) do
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       Options.create(state.url, state.cseq_num)
     )
 
-    case :gen_tcp.recv(state.socket, 0) do
+    case :gen_tcp.recv(state.rtsp_socket, 0) do
       {:ok, bytes} -> bytes
       {:error, reason} -> raise reason
     end
@@ -129,12 +127,12 @@ defmodule Hadean.RTSPConnection do
 
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       Describe.create(state.url, state.cseq_num)
     )
 
     response =
-      case :gen_tcp.recv(state.socket, 0) do
+      case :gen_tcp.recv(state.rtsp_socket, 0) do
         {:ok, bytes} -> bytes
         {:error, reason} -> raise reason
       end
@@ -153,13 +151,13 @@ defmodule Hadean.RTSPConnection do
 
           # resend DESCRIBE with auth info
           :gen_tcp.send(
-            state.socket,
+            state.rtsp_socket,
             Describe.create(state.url, state.cseq_num, Digest.get_str_rep(pid, "DESCRIBE"))
           )
 
           # now parse the SDP info from the response
           response =
-            case :gen_tcp.recv(state.socket, 0) do
+            case :gen_tcp.recv(state.rtsp_socket, 0) do
               {:ok, bytes} -> bytes
               {:error, reason} -> raise reason
             end
@@ -184,19 +182,19 @@ defmodule Hadean.RTSPConnection do
       end
 
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       Play.create(state.url, state.cseq_num, state.session, auth)
     )
 
     handle_play(state.transport, state)
 
-    # Task.start(fn -> start(state.socket) end)
+    # Task.start(fn -> start(state.rtsp_socket) end)
     {:reply, state, state |> Map.put(:cseq_num, state.cseq_num + 1)}
   end
 
   def handle_call(:pause, _from, state) do
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       case state.auth_needed do
         false ->
           Pause.create(state.url, state.cseq_num, state.context.session)
@@ -220,7 +218,7 @@ defmodule Hadean.RTSPConnection do
     pid = state.auth_pid
 
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       case state.auth_needed do
         false ->
           Teardown.create(state.url, state.cseq_num, state.context.session)
@@ -239,7 +237,7 @@ defmodule Hadean.RTSPConnection do
     # stop streaming process
     Process.exit(state.streamer_pid, :shutdown)
 
-    :gen_tcp.close(state.socket)
+    :gen_tcp.close(state.rtsp_socket)
     # stop streaming process
     if state.video_rtp_streamer_pid != 0 do
       Process.exit(state.video_rtp_streamer_pid, :shutdown)
@@ -304,7 +302,7 @@ defmodule Hadean.RTSPConnection do
 
   defp handle(:tcp, id, state) do
     :gen_tcp.send(
-      state.socket,
+      state.rtsp_socket,
       case state.auth_needed do
         false ->
           Setup.create(
@@ -327,7 +325,7 @@ defmodule Hadean.RTSPConnection do
       end
     )
 
-    _response = :gen_tcp.recv(state.socket, 0)
+    _response = :gen_tcp.recv(state.rtsp_socket, 0)
     state |> Map.put(:cseq_num, state.cseq_num + 1)
   end
 
@@ -375,31 +373,34 @@ defmodule Hadean.RTSPConnection do
     |> Map.put(rtcp_socket_atom, rtcp_socket)
   end
 
+  @spec connect(PID) :: any
   def connect(pid) do
     GenServer.call(pid, :connect)
   end
 
+  @spec options(PID) :: any
   def options(pid) do
     GenServer.call(pid, :options)
   end
 
+  @spec describe(PID) :: any
   def describe(pid) do
     GenServer.call(pid, :describe)
   end
 
   # TODO abhi: figure out a way to use regex
 
-  @spec play(PID) :: term
+  @spec play(PID) :: any
   def play(pid) do
     GenServer.call(pid, :play)
   end
 
-  @spec pause(PID) :: term
+  @spec pause(PID) :: any
   def pause(pid) do
     GenServer.call(pid, :pause)
   end
 
-  @spec setup(PID, :all | :audio | :video) :: term
+  @spec setup(PID, :all | :audio | :video) :: any
   def setup(pid, mode) do
     setup_type =
       case mode do
@@ -416,17 +417,17 @@ defmodule Hadean.RTSPConnection do
     GenServer.call(pid, setup_type)
   end
 
-  @spec teardown(PID) :: term
+  @spec teardown(PID) :: any
   def teardown(pid) do
     stop_server(pid)
   end
 
-  @spec stop(PID) :: term
+  @spec stop(PID) :: any
   def stop(pid) do
     stop_server(pid)
   end
 
-  @spec stop_server(PID) :: term
+  @spec stop_server(PID) :: any
   defp stop_server(pid) do
     GenServer.call(pid, :teardown)
     GenServer.call(pid, :stop)
@@ -469,22 +470,13 @@ defmodule Hadean.RTSPConnection do
   end
 
   defp handle_play(:tcp, state) do
-    audio_rtp_type =
-      case state.context.audio_track do
-        nil -> nil
-        t -> t.rtp_type
-      end
-
-    video_rtp_type =
-      case state.context.video_track do
-        nil -> nil
-        t -> t.rtp_type
-      end
+    audio_rtp_type = get_rtp_type(state.context.audio_track)
+    video_rtp_type = get_rtp_type(state.context.video_track)
 
     streamer_pid =
-      spawn(__MODULE__, :start, [state.socket, state.context, audio_rtp_type, video_rtp_type])
+      spawn(__MODULE__, :start, [state.rtsp_socket, state.context, audio_rtp_type, video_rtp_type])
 
-    # Task.start(fn -> start(state.socket) end)
+    # Task.start(fn -> start(state.rtsp_socket) end)
     {:reply, state, state |> Map.put(:streamer_pid, streamer_pid)}
   end
 
@@ -524,8 +516,16 @@ defmodule Hadean.RTSPConnection do
           state
       end
 
-    # Task.start(fn -> start(state.socket) end)
+    # Task.start(fn -> start(state.rtsp_socket) end)
     {:reply, state, state}
+  end
+
+  @spec get_rtp_type(Hadean.Connection.Track.t()) :: nil | integer()
+  defp get_rtp_type(track) do
+    case track do
+      nil -> nil
+      t -> t.rtp_type
+    end
   end
 
   def start_video_rtp_stream(socket, context) do
