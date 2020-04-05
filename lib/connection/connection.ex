@@ -2,19 +2,21 @@ use Bitwise
 
 defmodule Hadean.RTSPConnection do
   use GenServer
-  alias Hadean.Packet.RTPPacketHeader
-  alias Hadean.Packet.VideoPacket
-  alias Hadean.Packet.AudioPacket
-  alias Hadean.Parsers.SDPParser
-  alias Hadean.Parsers.UrlParser
-  alias Hadean.Parsers.DescribeResponseParser
-  alias Hadean.Parsers.SetupResponseParser
-  alias Hadean.Commands.Describe
-  alias Hadean.Commands.Setup
-  alias Hadean.Commands.Pause
-  alias Hadean.Commands.Options
-  alias Hadean.Commands.Teardown
-  alias Hadean.Commands.Play
+
+  alias Hadean.Packet.{
+    RTPPacketHeader,
+    VideoPacket,
+    AudioPacket
+  }
+
+  alias Hadean.Parsers.{
+    SDPParser,
+    UrlParser,
+    DescribeResponseParser,
+    SetupResponseParser
+  }
+
+  alias Hadean.Commands.{Describe, Setup, Pause, Options, Teardown, Play}
   alias Hadean.Authentication.Digest
   alias Hadean.Connection.SocketPairGenerator
 
@@ -25,8 +27,6 @@ defmodule Hadean.RTSPConnection do
             port: 0,
             rtsp_socket: nil,
             session: 0,
-            # interleaved or UDP
-            mode: :interleaved,
             cseq_num: 0,
             streamer_pid: 0,
             auth_pid: 0,
