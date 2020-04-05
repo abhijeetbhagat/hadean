@@ -1,22 +1,24 @@
 defmodule Hadean.RTSPStreamer do
   alias Hadean.RTSPConnection
-  alias Hadean.RTSPOverUDPConnection
+
+  # alias Hadean.RTSPOverUDPConnection
 
   def main(_args) do
-    start_tcp_conn()
+    start_udp_conn()
   end
 
   def start_udp_conn() do
     {:ok, pid} =
-      RTSPOverUDPConnection.start_link(
-        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"
-      )
+      RTSPConnection.start_link({
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov",
+        :udp
+      })
 
-    RTSPOverUDPConnection.connect(pid)
-    RTSPOverUDPConnection.options(pid)
-    RTSPOverUDPConnection.describe(pid)
-    RTSPOverUDPConnection.setup(pid)
-    RTSPOverUDPConnection.play(pid)
+    RTSPConnection.connect(pid)
+    RTSPConnection.options(pid)
+    RTSPConnection.describe(pid)
+    RTSPConnection.setup(pid, :audio)
+    RTSPConnection.play(pid)
 
     _ = """
       IO.puts("Spawned play ...")

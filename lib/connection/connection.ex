@@ -75,10 +75,12 @@ defmodule Hadean.RTSPConnection do
   end
 
   def start_link({url, transport}) do
+    SocketPairGenerator.start_link()
     GenServer.start_link(__MODULE__, {url, transport}, name: __MODULE__)
   end
 
   def start_link({url, username, password, transport}) do
+    SocketPairGenerator.start_link()
     GenServer.start_link(__MODULE__, {url, username, password, transport}, name: __MODULE__)
   end
 
