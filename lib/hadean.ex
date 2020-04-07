@@ -2,7 +2,7 @@ defmodule Hadean.RTSPStreamer do
   alias Hadean.RTSPConnection
 
   def main(_args) do
-    start_udp_conn()
+    start_tcp_conn()
   end
 
   def start_udp_conn() do
@@ -42,12 +42,12 @@ defmodule Hadean.RTSPStreamer do
         :tcp
       })
 
-    RTSPConnection.connect(pid, :audio)
+    RTSPConnection.connect(pid, :video)
     # RTSPConnection.options(pid)
     # RTSPConnection.describe(pid)
     # RTSPConnection.setup(pid, :audio)
     packet_processor = spawn(fn -> packet_processor() end)
-    RTSPConnection.attach_packet_processor(packet_processor)
+    RTSPConnection.attach_packet_processor(pid, packet_processor)
     RTSPConnection.play(pid)
     IO.puts("Spawned play ...")
 
@@ -67,9 +67,14 @@ defmodule Hadean.RTSPStreamer do
 
   defp packet_processor() do
     receive do
-      _ ->
-        :ok
-        # code
+      {:audio, _packet} ->
+        IO.puts("audio packet received")
+
+      {:video, packet} ->
+        IO.puts("frame_type: #{inspect(packet.frame_type)}")
+
+      {:unknown, _} ->
+        IO.puts("Unknown packet")
     end
 
     packet_processor()

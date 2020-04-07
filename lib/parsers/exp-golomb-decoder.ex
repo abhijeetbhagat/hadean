@@ -25,7 +25,6 @@ defmodule Hadean.Parsers.ExGolombDecoder do
   end
 
   defp loop(1, leading_zero_bit, slice_data) do
-    IO.puts("calculating frame type")
     <<n_bits::size(leading_zero_bit), slice_data::bitstring>> = slice_data
     {(:math.pow(2, leading_zero_bit) |> round) - 1 + n_bits, slice_data}
   end

@@ -268,7 +268,7 @@ defmodule Hadean.RTSPConnection do
   end
 
   def handle_call({:attach_packet_processor, pid}, _from, state) do
-    state |> Map.put(:packet_processor_pid, pid)
+    state = state |> Map.put(:packet_processor_pid, pid)
     {:reply, state, state}
   end
 
@@ -387,7 +387,6 @@ defmodule Hadean.RTSPConnection do
     GenServer.call(pid, :options)
     GenServer.call(pid, :describe)
     setup(pid, mode)
-    GenServer.call(pid, :play)
   end
 
   # @spec options(PID) :: any
@@ -450,9 +449,9 @@ defmodule Hadean.RTSPConnection do
     :ok
   end
 
-  @spec start(s, Hadean.Connection.ConnectionContext.t(), integer() | nil, integer() | nil) ::
+  @spec start(s, Hadean.Connection.ConnectionContext.t(), PID, integer() | nil, integer() | nil) ::
           no_return()
-  def start(socket, context, audio_rtp_type, video_rtp_type) do
+  def start(socket, context, packet_processor_pid, audio_rtp_type, video_rtp_type) do
     {:ok,
      <<
        magic::integer-8,
@@ -465,20 +464,26 @@ defmodule Hadean.RTSPConnection do
       {:ok, rtp_data} = :gen_tcp.recv(socket, len)
       {rtp_header, rtp_payload} = RTPPacketHeader.parse_packet(rtp_data)
 
-      case rtp_header.payload_type do
-        x when x == video_rtp_type ->
-          packet = VideoPacket.parse(rtp_header, rtp_payload)
-          IO.puts("frame_type: #{inspect(packet.frame_type)}")
+      pt = rtp_header.payload_type
 
-        y when y == audio_rtp_type ->
-          _packet = AudioPacket.parse(rtp_header, rtp_payload, context.audio_track.codec_info)
+      {type, packet} =
+        case pt do
+          ^video_rtp_type ->
+            packet = VideoPacket.parse(rtp_header, rtp_payload)
+            {:video, packet}
 
-        _ ->
-          nil
-      end
+          ^audio_rtp_type ->
+            packet = AudioPacket.parse(rtp_header, rtp_payload, context.audio_track.codec_info)
+            {:audio, packet}
+
+          _ ->
+            {:unknown, nil}
+        end
+
+      send(packet_processor_pid, {type, packet})
     end
 
-    start(socket, context, audio_rtp_type, video_rtp_type)
+    start(socket, context, packet_processor_pid, audio_rtp_type, video_rtp_type)
   end
 
   defp handle_play(:tcp, state) do
@@ -486,7 +491,13 @@ defmodule Hadean.RTSPConnection do
     video_rtp_type = get_rtp_type(state.context.video_track)
 
     streamer_pid =
-      spawn(__MODULE__, :start, [state.rtsp_socket, state.context, audio_rtp_type, video_rtp_type])
+      spawn(__MODULE__, :start, [
+        state.rtsp_socket,
+        state.context,
+        state.packet_processor_pid,
+        audio_rtp_type,
+        video_rtp_type
+      ])
 
     # Task.start(fn -> start(state.rtsp_socket) end)
     {:reply, state, state |> Map.put(:streamer_pid, streamer_pid)}
