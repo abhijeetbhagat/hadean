@@ -45,7 +45,10 @@ defmodule Hadean.Parsers.SDPParser do
     audio_lines = Enum.take_while(lines, fn line -> String.starts_with?(line, "a=") end)
 
     track =
-      common_parsing_loop(audio_lines, %Hadean.Connection.Track{type: :audio, rtp_type: type_num})
+      common_parsing_loop(audio_lines, %Hadean.Connection.Track{
+        type: :audio,
+        rtp_type: String.to_integer(type_num)
+      })
 
     audio_codec_info =
       track.fmtp
@@ -99,7 +102,10 @@ defmodule Hadean.Parsers.SDPParser do
     audio_lines = Enum.take_while(lines, fn line -> String.starts_with?(line, "a=") end)
 
     track =
-      common_parsing_loop(audio_lines, %Hadean.Connection.Track{type: :video, rtp_type: type_num})
+      common_parsing_loop(audio_lines, %Hadean.Connection.Track{
+        type: :video,
+        rtp_type: String.to_integer(type_num)
+      })
 
     {track, lines |> Enum.drop(length(audio_lines))}
   end
