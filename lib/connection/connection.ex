@@ -32,7 +32,8 @@ defmodule Hadean.RTSPConnection do
             auth_pid: 0,
             auth_needed: false,
             context: nil,
-            transport: :unknown
+            transport: :unknown,
+            packet_processor_pid: nil
 
   def init([url, server, port]) do
     state = %__MODULE__{
@@ -266,6 +267,11 @@ defmodule Hadean.RTSPConnection do
     {:stop, :normal, state}
   end
 
+  def handle_call({:attach_packet_processor, pid}, _from, state) do
+    state |> Map.put(:packet_processor_pid, pid)
+    {:reply, state, state}
+  end
+
   defp handle_audio(:tcp, state) do
     if state.context.audio_track != nil do
       handle(:tcp, state.context.audio_track.id, state)
@@ -375,20 +381,24 @@ defmodule Hadean.RTSPConnection do
     |> Map.put(rtcp_socket_atom, rtcp_socket)
   end
 
-  @spec connect(PID) :: any
-  def connect(pid) do
+  @spec connect(PID, :all | :video | :audio) :: any
+  def connect(pid, mode) do
     GenServer.call(pid, :connect)
-  end
-
-  @spec options(PID) :: any
-  def options(pid) do
     GenServer.call(pid, :options)
+    GenServer.call(pid, :describe)
+    setup(pid, mode)
+    GenServer.call(pid, :play)
   end
 
-  @spec describe(PID) :: any
-  def describe(pid) do
-    GenServer.call(pid, :describe)
-  end
+  # @spec options(PID) :: any
+  # def options(pid) do
+  # GenServer.call(pid, :options)
+  # end
+
+  # @spec describe(PID) :: any
+  # def describe(pid) do
+  # GenServer.call(pid, :describe)
+  # end
 
   # TODO abhi: figure out a way to use regex
 
@@ -403,7 +413,7 @@ defmodule Hadean.RTSPConnection do
   end
 
   @spec setup(PID, :all | :audio | :video) :: any
-  def setup(pid, mode) do
+  defp setup(pid, mode) do
     setup_type =
       case mode do
         :all ->
@@ -559,5 +569,9 @@ defmodule Hadean.RTSPConnection do
     :gen_udp.recv(socket, 0)
     IO.puts("audio rtcp streamer: recvd rtcp packet")
     start_audio_rtcp_stream(socket)
+  end
+
+  def attach_packet_processor(pid, packet_processor) do
+    GenServer.call(pid, {:attach_packet_processor, packet_processor})
   end
 end
