@@ -50,17 +50,20 @@ defmodule Hadean.Parsers.SDPParser do
         rtp_type: String.to_integer(type_num)
       })
 
-    audio_codec_info =
-      track.fmtp
-      |> String.split(" ")
-      |> Enum.at(1)
-      |> String.split(";")
-      |> Enum.map(fn prop_val -> String.split(prop_val, "=") |> List.to_tuple() end)
-      |> to_audio_codec_info(%Hadean.Codecs.AudioCodecInfo{})
+    audio_codec_info = parse_fmtp(track.fmtp)
 
     track |> Map.put(:codec_info, audio_codec_info)
 
     {track, lines |> Enum.drop(length(audio_lines))}
+  end
+
+  defp parse_fmtp(line) do
+    line
+    |> String.split(" ")
+    |> Enum.at(1)
+    |> String.split(";")
+    |> Enum.map(fn prop_val -> String.split(prop_val, "=") |> List.to_tuple() end)
+    |> to_audio_codec_info(%Hadean.Codecs.AudioCodecInfo{})
   end
 
   defp to_audio_codec_info([{prop, val} | tail], codec_info) do
