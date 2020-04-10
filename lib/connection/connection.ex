@@ -389,18 +389,6 @@ defmodule Hadean.RTSPConnection do
     setup(pid, mode)
   end
 
-  # @spec options(PID) :: any
-  # def options(pid) do
-  # GenServer.call(pid, :options)
-  # end
-
-  # @spec describe(PID) :: any
-  # def describe(pid) do
-  # GenServer.call(pid, :describe)
-  # end
-
-  # TODO abhi: figure out a way to use regex
-
   @spec play(PID) :: any
   def play(pid) do
     GenServer.call(pid, :play)
