@@ -45,19 +45,25 @@ defmodule Hadean.Parsers.SDPParser do
     audio_lines = Enum.take_while(lines, fn line -> String.starts_with?(line, "a=") end)
 
     track =
-      common_parsing_loop(audio_lines, %Hadean.Connection.Track{type: :audio, rtp_type: type_num})
+      common_parsing_loop(audio_lines, %Hadean.Connection.Track{
+        type: :audio,
+        rtp_type: String.to_integer(type_num)
+      })
 
-    audio_codec_info =
-      track.fmtp
-      |> String.split(" ")
-      |> Enum.at(1)
-      |> String.split(";")
-      |> Enum.map(fn prop_val -> String.split(prop_val, "=") |> List.to_tuple() end)
-      |> to_audio_codec_info(%Hadean.Codecs.AudioCodecInfo{})
+    audio_codec_info = parse_fmtp(track.fmtp)
 
-    track |> Map.put(:codec_info, audio_codec_info)
+    track = track |> Map.put(:codec_info, audio_codec_info)
 
     {track, lines |> Enum.drop(length(audio_lines))}
+  end
+
+  defp parse_fmtp(line) do
+    line
+    |> String.split(" ")
+    |> Enum.at(1)
+    |> String.split(";")
+    |> Enum.map(fn prop_val -> String.split(prop_val, "=") |> List.to_tuple() end)
+    |> to_audio_codec_info(%Hadean.Codecs.AudioCodecInfo{})
   end
 
   defp to_audio_codec_info([{prop, val} | tail], codec_info) do
@@ -99,7 +105,10 @@ defmodule Hadean.Parsers.SDPParser do
     audio_lines = Enum.take_while(lines, fn line -> String.starts_with?(line, "a=") end)
 
     track =
-      common_parsing_loop(audio_lines, %Hadean.Connection.Track{type: :video, rtp_type: type_num})
+      common_parsing_loop(audio_lines, %Hadean.Connection.Track{
+        type: :video,
+        rtp_type: String.to_integer(type_num)
+      })
 
     {track, lines |> Enum.drop(length(audio_lines))}
   end

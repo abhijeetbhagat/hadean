@@ -1,22 +1,23 @@
 defmodule Hadean.RTSPStreamer do
   alias Hadean.RTSPConnection
-  alias Hadean.RTSPOverUDPConnection
 
   def main(_args) do
-    start_tcp_conn()
+    start_udp_conn()
   end
 
   def start_udp_conn() do
     {:ok, pid} =
-      RTSPOverUDPConnection.start_link(
-        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"
-      )
+      RTSPConnection.start_link({
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov",
+        :udp
+      })
 
-    RTSPOverUDPConnection.connect(pid)
-    RTSPOverUDPConnection.options(pid)
-    RTSPOverUDPConnection.describe(pid)
-    RTSPOverUDPConnection.setup(pid)
-    RTSPOverUDPConnection.play(pid)
+    RTSPConnection.connect(pid, :all)
+
+    packet_processor = spawn(fn -> packet_processor() end)
+    RTSPConnection.attach_packet_processor(pid, packet_processor)
+
+    RTSPConnection.play(pid)
 
     _ = """
       IO.puts("Spawned play ...")
@@ -36,14 +37,15 @@ defmodule Hadean.RTSPStreamer do
 
   def start_tcp_conn() do
     {:ok, pid} =
-      RTSPConnection.start_link(
-        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov"
-      )
+      RTSPConnection.start_link({
+        "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mov",
+        :tcp
+      })
 
-    RTSPConnection.connect(pid)
-    RTSPConnection.options(pid)
-    RTSPConnection.describe(pid)
-    RTSPConnection.setup(pid, :audio)
+    RTSPConnection.connect(pid, :video)
+
+    packet_processor = spawn(fn -> packet_processor() end)
+    RTSPConnection.attach_packet_processor(pid, packet_processor)
     RTSPConnection.play(pid)
     IO.puts("Spawned play ...")
 
@@ -59,6 +61,21 @@ defmodule Hadean.RTSPStreamer do
     """
 
     loop()
+  end
+
+  defp packet_processor() do
+    receive do
+      {:audio, _packet} ->
+        IO.puts("audio packet received")
+
+      {:video, packet} ->
+        IO.puts("frame_type: #{inspect(packet.frame_type)}")
+
+      {:unknown, _} ->
+        IO.puts("Unknown packet")
+    end
+
+    packet_processor()
   end
 
   def loop() do
