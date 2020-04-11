@@ -52,7 +52,7 @@ defmodule Hadean.Parsers.SDPParser do
 
     audio_codec_info = parse_fmtp(track.fmtp)
 
-    track |> Map.put(:codec_info, audio_codec_info)
+    track = track |> Map.put(:codec_info, audio_codec_info)
 
     {track, lines |> Enum.drop(length(audio_lines))}
   end
