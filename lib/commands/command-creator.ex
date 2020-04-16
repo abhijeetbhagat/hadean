@@ -5,6 +5,7 @@ defmodule Hadean.Commands.RTSPCommandCreator do
   alias Hadean.Commands.Setup
   alias Hadean.Commands.Pause
   alias Hadean.Commands.Teardown
+  alias Hadean.Commands.Options
 
   def init({url, agent}) do
     # session id comes from the DESCRIBE response
@@ -13,6 +14,11 @@ defmodule Hadean.Commands.RTSPCommandCreator do
 
   def start_link({url, agent}) do
     GenServer.start_link(__MODULE__, {url, agent}, name: __MODULE__)
+  end
+
+  def handle_call(:options, _from, state) do
+    req = Options.create(state.url, state.cseq_num)
+    {:reply, req, state |> update_cseq_num()}
   end
 
   def handle_call(:describe, _from, state) do
@@ -47,7 +53,7 @@ defmodule Hadean.Commands.RTSPCommandCreator do
 
   def handle_call({:set_session, session_id}, _from, state) do
     state = state |> Map.put(:session, session_id)
-    {:reply, state, state}
+    {:reply, :ok, state}
   end
 
   def create_command(pid, :describe) do
