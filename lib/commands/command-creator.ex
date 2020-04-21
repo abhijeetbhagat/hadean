@@ -56,6 +56,10 @@ defmodule Hadean.Commands.RTSPCommandCreator do
     {:reply, :ok, state}
   end
 
+  def create_command(pid, :options) do
+    GenServer.call(pid, :options)
+  end
+
   def create_command(pid, :describe) do
     GenServer.call(pid, :describe)
   end
