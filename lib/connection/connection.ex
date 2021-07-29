@@ -16,9 +16,10 @@ defmodule Hadean.RTSPConnection do
     SetupResponseParser
   }
 
-  alias Hadean.Commands.{Describe, Setup, Pause, Options, Teardown, Play}
+  alias Hadean.Commands.{Describe, Setup, Pause, Teardown}
   alias Hadean.Authentication.Digest
   alias Hadean.Connection.SocketPairGenerator
+  alias Hadean.Commands.RTSPCommandCreator
 
   @typep s :: port()
 
@@ -92,13 +93,15 @@ defmodule Hadean.RTSPConnection do
         {:error, reason} -> raise reason
       end
 
-    {:reply, state, state |> Map.put(:rtsp_socket, socket)}
+    {:ok, pid} = RTSPCommandCreator.start_link({state.url, "hadean"})
+
+    {:reply, state, state |> Map.put(:rtsp_socket, socket) |> Map.put(:command_creator_pid, pid)}
   end
 
   def handle_call(:options, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      Options.create(state.url, state.cseq_num)
+      RTSPCommandCreator.create_command(state.command_creator_pid, :options)
     )
 
     case :gen_tcp.recv(state.rtsp_socket, 0) do
@@ -131,7 +134,7 @@ defmodule Hadean.RTSPConnection do
   def handle_call(:describe, _from, state) do
     :gen_tcp.send(
       state.rtsp_socket,
-      Describe.create(state.url, state.cseq_num)
+      RTSPCommandCreator.create_command(state.command_creator_pid, :describe)
     )
 
     response =
@@ -168,6 +171,8 @@ defmodule Hadean.RTSPConnection do
           SDPParser.parse_sdp(response)
       end
 
+    RTSPCommandCreator.set_session(state.command_creator_pid, context.session)
+
     {:reply, state,
      state
      |> Map.put(:context, context)
@@ -186,7 +191,7 @@ defmodule Hadean.RTSPConnection do
 
     :gen_tcp.send(
       state.rtsp_socket,
-      Play.create(state.url, state.cseq_num, state.session, auth)
+      RTSPCommandCreator.create_command(state.command_creator_pid, :play)
     )
 
     handle_play(state.transport, state)
@@ -200,7 +205,7 @@ defmodule Hadean.RTSPConnection do
       state.rtsp_socket,
       case state.auth_needed do
         false ->
-          Pause.create(state.url, state.cseq_num, state.context.session)
+          RTSPCommandCreator.create_command(state.command_creator_pid, :pause)
 
         _ ->
           pid = state.auth_pid
@@ -224,7 +229,8 @@ defmodule Hadean.RTSPConnection do
       state.rtsp_socket,
       case state.auth_needed do
         false ->
-          Teardown.create(state.url, state.cseq_num, state.context.session)
+          # Teardown.create(state.url, state.cseq_num, state.context.session)
+          RTSPCommandCreator.create_command(state.command_creator_pid, :teardown)
 
         _ ->
           Teardown.create(
@@ -313,12 +319,7 @@ defmodule Hadean.RTSPConnection do
       state.rtsp_socket,
       case state.auth_needed do
         false ->
-          Setup.create(
-            state.url,
-            state.cseq_num,
-            state.context.session,
-            id
-          )
+          RTSPCommandCreator.create_command({:setup, id})
 
         _ ->
           pid = state.auth_agent
@@ -349,14 +350,7 @@ defmodule Hadean.RTSPConnection do
 
     :gen_tcp.send(
       state.rtsp_socket,
-      Setup.create(
-        state.url,
-        state.cseq_num,
-        state.context.session,
-        id,
-        rtp_port,
-        rtcp_port
-      )
+      RTSPCommandCreator.create_command({:setup, id, rtp_port, rtcp_port})
     )
 
     response =
